@@ -270,3 +270,47 @@ GROUP BY
     city
 ORDER BY 
     city ASC
+
+
+-- EJ 21: Para cada estado, obtener la cantidad de clientes referidos. Mostrar sólo los clientes que hayan sido
+-- referidos cuya compañía empiece con una letra que este en el rango de ‘A’ a ‘L’. 
+SELECT
+    state AS estado
+    COUNT (*) clientes_referidos
+FROM 
+    customer 
+WHERE
+    customer_num_referedBy IS NOT NULL AND 
+    company >= 'A' AND 
+    company < 'M'
+GROUP BY 
+    state
+
+-- EJ 22: Se desea obtener el promedio de lead_time por cada estado, donde los Fabricantes tengan una ‘e’ en
+-- manu_name y el lead_time sea entre 5 y 20. 
+SELECT 
+    state, 
+    AVG(lead_time) AS promedio_lead_time
+FROM 
+    manufact 
+WHERE 
+    manu_name LIKE '%e%' AND 
+    lead_time BETWEEN 5 AND 20
+GROUP BY 
+    state 
+
+-- EJ 23: Se tiene la tabla units, de la cual se quiere saber la cantidad de unidades que hay por cada tipo (unit) que no
+-- tengan en nulo el descr_unit, y además se deben mostrar solamente los que cumplan que la cantidad
+-- mostrada se superior a 5. Al resultado final se le debe sumar 1 
+SELECT 
+    unit, 
+    COUNT(*) + 1 AS cantidad_unidades
+FROM 
+    units 
+WHERE 
+    unit_descr IS NOT NULL AND 
+GROUP BY 
+    unit 
+HAVING 
+    COUNT(*) > 5
+    
