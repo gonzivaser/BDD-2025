@@ -295,3 +295,43 @@ ORDER BY
 	en stock, la “fecha modificada” deberá estar en NULL.
 	Listar toda la información ordenada por “fecha modificada”
 */
+
+
+
+
+
+/* Ejercicio 9: 
+	Listar el número, nombre, apellido, estado, cantidad de órdenes y monto total comprado de los
+	clientes que no sean del estado de Wisconsin y cuyo monto total comprado sea mayor que el monto
+	total promedio de órdenes de compra.
+*/
+SELECT 
+	c.customer_num, 
+	c.fname, 
+	c.lname, 
+	c.state, 
+	COUNT(o.order_num) AS Cantidad_De_Ordenes, 
+	SUM(i.quantity * i.unit_price) AS Monto_Total_Comprado
+FROM 
+	orders o
+	JOIN customer c ON o.customer_num = c.customer_num
+	JOIN items i ON o.order_num = i.order_num
+WHERE 
+	c.state != 'WI'
+GROUP BY 
+	c.customer_num, 
+	c.fname, 
+	c.lname, 
+	c.state
+HAVING 
+	SUM(i.quantity * i.unit_price) > 
+	(
+		SELECT 
+			AVG(i2.quantity * i2.unit_price)
+		FROM 
+			items i2
+		JOIN 
+            orders o2 ON i2.order_num = o2.order_num
+	) 
+ORDER BY 
+	Monto_Total_Comprado DESC; 
