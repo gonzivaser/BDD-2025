@@ -59,79 +59,69 @@ CREATE TABLE AuditProd (
 	Mensaje VARCHAR(100)
 ); 
 
-CREATE TABLE ProductosDeprecados (
-	stock_num SMALLINT, 
-	manu_code CHAR(3)
-);
+SELECT * INTO ProductosDeprecados FROM products WHERE 1 = 0;
 
 -- Creo el Procedure
 CREATE PROCEDURE BorrarProd
 AS
 BEGIN 
 	-- Declaro variables
-	DECLARE @stock_num SMALLINT; 
-	DECLARE @manu_code CHAR(3); 
-	DECLARE @mensaje VARCHAR(100);
+	DECLARE @prodBorrado_Stock_Num SMALLINT; 
+	DECLARE @prodBorrado_Manu_Code CHAR(3); 
+	DECLARE @prodBorrado_Mensaje VARCHAR(100);
 
-	-- Declaro Cursor
-	DECLARE productos_cursor CURSOR FOR 
+	-- Creo Cursor 
+	DECLARE prodBorrados_cursor CURSOR FOR 
 		SELECT stock_num, manu_code FROM ProductosDeprecados; 
 
-	-- Abro cursor 
-	OPEN productos_cursor; 
-	FETCH NEXT FROM productos_cursor INTO @stock_num, @manu_code;
+	-- Abro Cursor 
+	OPEN prodBorrados_cursor; 
+	FETCH prodBorrados_cursor INTO @prodBorrado_Stock_Num, @prodBorrado_Manu_Code; 
 
+	-- Logica en el cursor 
 	WHILE @@FETCH_STATUS = 0
 	BEGIN 
-		BEGIN TRY 
-			BEGIN TRANSACTION; 
-
-				-- Verifico si producto tuvo ventas 
-				IF EXISTS (
-					SELECT 1 FROM items i WHERE @stock_num = i.stock_num AND @manu_code = i.manu_code
-				)
-
-				-- Seteo mensaje a 'Producto con Ventas'
-				BEGIN 
-					SET @mensaje = 'Producto con Ventas'
-				END
-
-				-- Si el producto no tuvo ventas, seteo mensaje a 'Borrado' y lo borro de la tabla de productos
+		BEGIN TRY
+			BEGIN TRANSACTION
+				-- Si tuvo ventas --> Seteo al mensaje a "Producto con ventas"
+				IF EXISTS(SELECT 1 FROM items WHERE stock_num = @prodBorrado_Stock_Num AND manu_code = @prodBorrado_Manu_Code)
+					BEGIN
+						SET @prodBorrado_Mensaje = 'Producto con ventas'; 
+					END
+				
+				-- Si no tuvo ventas --> 
 				ELSE 
 				BEGIN 
-					SET @mensaje = 'Borrado';
+					SET @prodBorrado_Mensaje = 'Borrado'; 
+
 					DELETE FROM products 
-					WHERE 
-						@stock_num = stock_num AND @manu_code = manu_code
+					WHERE stock_num = @prodBorrado_Stock_Num AND manu_code = @prodBorrado_Manu_Code
 				END
 
-				-- Guardo en la tabla de AuditProd
+				-- Ahora lo guardo en la tabla de AuditProd
 				BEGIN
 					INSERT INTO AuditProd(stock_num, manu_code, Mensaje)
-					VALUES (@stock_num, @manu_code, @mensaje); 
+					VALUES (@prodBorrado_Stock_Num, @prodBorrado_Manu_Code, @prodBorrado_Mensaje);
 				END
 
-			COMMIT TRANSACTION;
+			COMMIT TRANSACTION; 
 		END TRY
 
-		BEGIN CATCH
+		BEGIN CATCH	
 			ROLLBACK TRANSACTION; 
-				SET @mensaje = ERROR_MESSAGE(); 
-
-				-- Guardo en la tabla de AuditProd
-				BEGIN
-					INSERT INTO AuditProd(stock_num, manu_code, Mensaje)
-					VALUES (@stock_num, @manu_code, @mensaje); 
-				END
+				-- Si hubo un error, lo inserto en la tabla de AudiProd con el error 
+				INSERT INTO AuditProd (stock_num, manu_code, Mensaje)
+				VALUES (@prodBorrado_Stock_Num, @prodBorrado_Manu_Code, ERROR_MESSAGE());
 		END CATCH; 
 
 		-- Avanzo cursor 
-		FETCH NEXT FROM productos_cursor INTO @stock_num, @manu_code; 
-	
+		FETCH prodBorrados_cursor INTO @prodBorrado_Stock_Num, @prodBorrado_Manu_Code; 
+
 	END
 
-	CLOSE productos_cursor; 
-	DEALLOCATE productos_cursor; 
+	-- Cierro cursor 
+	CLOSE prodBorrados_cursor; 
+	DEALLOCATE prodBorrados_cursor; 
 END; 
 
 /*CASOS DE PRUEBA*/
@@ -150,6 +140,7 @@ EXEC BorrarProd;
 SELECT * FROM AuditProd;
 
 
+
 /*
 	3) 5. Trigger
 	Crear un trigger que ante un cambio de precios en un producto inserte un nuevo registro con el precio anterior	
@@ -160,8 +151,6 @@ SELECT * FROM AuditProd;
 	Nota: Las actualizaciones de precios pueden ser masivas.
 */
 
-DROP TABLE PRECIOS_HIST;
-
 CREATE TABLE Precios_Hist (
 	stock_num SMALLINT, 
 	manu_code CHAR(3), 
@@ -170,29 +159,74 @@ CREATE TABLE Precios_Hist (
 	precio_unit DECIMAL(10, 2)
 );
 
-CREATE TRIGGER trg_actualizarPrecioVol2
+CREATE TRIGGER actualizarPreciosDeProducto_trg
 ON products 
 AFTER UPDATE 
-AS
+AS 
 BEGIN 
-	INSERT INTO Precios_Hist(stock_num, manu_code, fechaDesde, fechaHasta, precio_unit)
-	SELECT 
-		d.stock_num, 
-		d.manu_code, 
-		ISNULL(
-			(
-				SELECT MAX(ph.fechaHasta)
-				FROM Precios_Hist ph
-				WHERE ph.stock_num = d.stock_num AND ph.manu_code = d.manu_code
-			),'2000-01-01'
-		) AS fechaDesde, 
-		CAST(GETDATE() AS DATE) AS fechaHasta, 
-		d.unit_price
-	FROM 
-		deleted d
-		JOIN inserted i ON d.stock_num = i.stock_num AND d.manu_code = i.manu_code
-	WHERE 
-		d.unit_price <> i.unit_price
+	IF UPDATE(unit_price) 
+	BEGIN 
+		DECLARE @stock_num SMALLINT; 
+		DECLARE @manu_code CHAR(3); 
+		DECLARE @fechaDesde DATE; 
+		DECLARE @fechaHasta DATE; 
+		DECLARE @last_price DECIMAL(10,2); 
+
+		-- Creo cursor 
+		DECLARE prodPrecioActualizados_cursor CURSOR FOR 
+			SELECT 
+				i.stock_num, 
+				i.manu_code, 
+				d.unit_price
+			FROM
+				inserted i 
+				JOIN deleted d ON i.stock_num = d.stock_num
+			WHERE 
+				i.unit_price <> d.unit_price; 
+
+		-- Abro cursor 
+		OPEN prodPrecioActualizado_cursor; 
+		FETCH prodPrecioActualizado_cursor INTO @stock_num, @manu_code, @last_price; 
+
+		-- Logica en el cursor 
+		WHILE @@FETCH_STATUS = 0
+		BEGIN 
+			-- Pongo valor a atributo fechaDesde y fechaHasta
+			BEGIN
+				SELECT
+					@fechaHasta = CAST(GETDATE() AS DATE),
+					@fechaDesde = ISNULL(
+						(SELECT MAX(ph.fechaHasta)FROM Precios_Hist ph WHERE ph.stock_num = @stock_num AND ph.manu_code = @manu_code), 
+						'2000-01-01')
+				FROM 
+					Precios_Hist
+				WHERE 
+					stock_num = @stock_num AND manu_code = @manu_code
+			END
+
+			-- Inserto en la tabla de Precios_Hist
+			BEGIN 
+				INSERT INTO Precios_Hist(stock_num, manu_code, fechaDesde, fechaHasta, precio_unit)
+				VALUES (@stock_num, @manu_code, @fechaDesde, @fechaHasta, @last_price); 
+			END 
+
+			-- Avanzo cursor 
+			FETCH prodPrecioActualizado_cursor INTO @stock_num, @manu_code, @last_price;
+		END 
+
+		-- Cierro cursor
+		CLOSE prodPrecioActualizado_cursor;
+		DEALLOCATE prodPrecioActualizado_cursor;
+
+	END
 END;
+
+
+
+
+
+
+
+
 
 
