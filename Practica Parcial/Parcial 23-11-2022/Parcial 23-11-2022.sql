@@ -108,11 +108,13 @@ CREATE OR ALTER PROCEDURE ResumenMensualPR @unaFecha DATE
 AS 
 BEGIN 
 	-- Declaro Variables 
-	DECLARE @anioMes VARCHAR(6); 
-	DECLARE @stock_num SMALLINT; 
-	DECLARE @manu_code CHAR(3); 
-	DECLARE @Cantidad INT;
-	DECLARE @Monto DECIMAL(10, 2);
+	DECLARE @anioMes VARCHAR(6),
+			@stock_num SMALLINT, 
+			@manu_code CHAR(3), 
+			@Cantidad INT,
+			@Monto DECIMAL(10, 2),
+			@unit CHAR(4), 
+			@Cantidad_Final INT; 
 
 	-- Seteo el anioMes al formato pedido 
 	SET @anioMes = FORMAT(@unaFecha, 'yyyyMM')
@@ -120,57 +122,67 @@ BEGIN
 	-- Declaro Cursor 
 	DECLARE resumenMensual_cursor CURSOR FOR 
 		SELECT 
-			FORMAT(o.order_date, 'yyyyMM') AS anioMes,
 			p.stock_num, 
 			p.manu_code, 
-			SUM (
-				CASE 
-					WHEN u.unit = 'Box' THEN i.quantity * 12
-					WHEN u.unit = 'Case' THEN i.quantity * 6
-					WHEN u.unit = 'Pair' THEN i.quantity * 2
-					ELSE i.quantity
-				END
-			) AS Cantidad,
-			SUM(i.quantity * i.unit_price) AS Monto
+			u.unit, 
+			SUM(i.quantity * i.unit_price) AS Monto,
+			SUM(i.quantity) AS Cantidad
 		FROM 
-			orders o 
-			JOIN items i ON o.order_num = i.order_num
-			JOIN products p ON i.stock_num = p.stock_num
+			products p 
 			JOIN units u ON p.unit_code = u.unit_code
+			JOIN items i ON p.stock_num = i.stock_num
+			JOIN orders o ON i.order_num = o.order_num
 		WHERE 
-			YEAR(o.order_date) = YEAR(@unaFecha)
-			AND MONTH(o.order_date) = MONTH(@unaFecha)
-		GROUP BY
-			    FORMAT(o.order_date, 'yyyyMM'), p.stock_num, p.manu_code;
+			YEAR(o.order_date) = YEAR(@unaFecha) AND 
+			MONTH(o.order_date) = MONTH(@unaFecha)
+		GROUP BY 
+			p.stock_num, p.manu_code
 
 	-- Abro Cursor 
 	OPEN resumenMensual_cursor; 
-	FETCH resumenMensual_cursor INTO @anioMes, @stock_num, @manu_code, @Cantidad, @Monto;
+	FETCH resumenMensual_cursor INTO @stock_num, @manu_code, @unit, @Monto, @Cantidad; 
 
 	-- Logica de cursor 
 	WHILE @@FETCH_STATUS = 0
 	BEGIN 
 		BEGIN TRY
 			BEGIN TRANSACTION
+				
+				-- Aplico logica de Cantidades
+				IF @unit = 'Box'
+					SET @Cantidad_Final = @Cantidad * 12
+				ELSE IF @unit = 'Case'
+					SET @Cantidad_Final = @Cantidad * 6
+				ELSE IF @unit = 'Pair'
+					SET @Cantidad_Final = @Cantidad * 2
+				ELSE 
+					SET @Cantidad_Final = @Cantidad
+
 				-- Inserto en la tabla de VENTASxMES
-				INSERT INTO VENTASxMES (anioMes, stock_num, manu_code, Cantidad, Monto)
-				VALUES (@anioMes, @stock_num, @manu_code, @Cantidad, @Monto);
+				INSERT INTO VENTASxMES(stock_num, manu_code, Cantidad, Monto)
+				VALUES (@stock_num, @manu_code, @Cantidad_Final, @Monto);
+
+				-- Avanzo cursor 
+				FETCH resumenMensual_cursor INTO @anioMes, @stock_num, @manu_code, @Cantidad, @Monto;
+					
 			COMMIT TRANSACTION
+
+			-- Cierro Cursor 
+			CLOSE resumenMensual_cursor;
+			DEALLOCATE resumenMensual_cursor;
 		END TRY
 
 		BEGIN CATCH
 			ROLLBACK TRANSACTION
+				-- Cierro Cursor 
+				CLOSE resumenMensual_cursor;
+				DEALLOCATE resumenMensual_cursor;
+
+				-- Tiro error
 				DECLARE @ErrMsg NVARCHAR(4000) = ERROR_MESSAGE();
 				RAISERROR('Error: %s', 16, 1, @ErrMsg);
 		END CATCH
-
-		-- Avanzo cursor 
-		FETCH resumenMensual_cursor INTO @anioMes, @stock_num, @manu_code, @Cantidad, @Monto;
 	END
-
-	-- Cierro Cursor 
-	CLOSE resumenMensual_cursor;
-	DEALLOCATE resumenMensual_cursor;
 END;
 
 
